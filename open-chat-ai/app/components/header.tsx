@@ -13,7 +13,7 @@ export function Header({
   hasMessages,
 }: HeaderProps) {
   return (
-    <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center justify-between border-b bg-background px-4 pt-[env(safe-area-inset-top)]">
+    <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b bg-background px-4 pt-[env(safe-area-inset-top)] pb-3" style={{ minHeight: "calc(3.5rem + env(safe-area-inset-top))" }}>
       <h1 className="text-lg font-semibold">Open Chat AI</h1>
       <div className="flex items-center gap-2">
         {hasMessages && (
