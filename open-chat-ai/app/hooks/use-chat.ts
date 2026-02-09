@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { sendMessage } from "~/lib/bedrock-client";
+import { sendMessageStream } from "~/lib/bedrock-client";
 import { loadJSON, saveJSON } from "~/lib/storage";
 import type { Message } from "~/types/chat";
 import type { Settings } from "~/types/settings";
@@ -35,19 +35,27 @@ export function useChat(settings: Settings) {
       persistMessages(updatedMessages);
       setIsLoading(true);
 
+      const assistantMessage: Message = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: "",
+        timestamp: Date.now(),
+      };
+
+      const messagesWithAssistant = [...updatedMessages, assistantMessage];
+      setMessages(messagesWithAssistant);
+
       try {
-        const reply = await sendMessage(settings, updatedMessages);
-        const assistantMessage: Message = {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: reply,
-          timestamp: Date.now(),
-        };
+        await sendMessageStream(settings, updatedMessages, (chunk) => {
+          assistantMessage.content += chunk;
+          setMessages([...updatedMessages, { ...assistantMessage }]);
+        });
         persistMessages([...updatedMessages, assistantMessage]);
       } catch (err) {
         const errorMessage =
           err instanceof Error ? err.message : "An error occurred";
         setError(errorMessage);
+        setMessages(updatedMessages);
       } finally {
         setIsLoading(false);
       }

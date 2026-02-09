@@ -18,13 +18,14 @@ interface ConverseResponse {
   };
 }
 
-export async function sendMessage(
+export async function sendMessageStream(
   settings: Settings,
   messages: Message[],
-): Promise<string> {
+  onChunk: (text: string) => void,
+): Promise<void> {
   const { apiKey, modelId, systemPrompt, maxTokens } = settings;
 
-  const endpoint = `https://bedrock-runtime.${BEDROCK_REGION}.amazonaws.com/model/${encodeURIComponent(modelId)}/converse`;
+  const endpoint = `https://bedrock-runtime.${BEDROCK_REGION}.amazonaws.com/model/${encodeURIComponent(modelId)}/converse-stream`;
 
   const body: ConverseRequest = {
     modelId,
@@ -53,10 +54,40 @@ export async function sendMessage(
     throw new Error(`Bedrock API error (${res.status}): ${errorText}`);
   }
 
-  const data = (await res.json()) as ConverseResponse;
-  const text = data.output.message.content
-    .map((c) => c.text)
-    .join("");
+  if (!res.body) {
+    throw new Error("Response body is null");
+  }
 
-  return text;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let processedLength = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const decoded = decoder.decode(value, { stream: true });
+      buffer += decoded;
+
+      // Extract JSON objects from AWS EventStream format
+      // Look for contentBlockDelta events with text
+      const regex = /"delta":\{"text":"([^"]*(?:\\.[^"]*)*)"\}/g;
+      regex.lastIndex = processedLength;
+      let match;
+
+      while ((match = regex.exec(buffer)) !== null) {
+        const text = match[1]
+          .replace(/\\n/g, "\n")
+          .replace(/\\t/g, "\t")
+          .replace(/\\"/g, '"')
+          .replace(/\\\\/g, "\\");
+        onChunk(text);
+        processedLength = regex.lastIndex;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
