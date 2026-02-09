@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import { ScrollArea } from "~/components/ui/scroll-area";
 import { MessageBubble } from "./message-bubble";
 import { LoadingIndicator } from "./loading-indicator";
 import { EmptyState } from "./empty-state";
@@ -12,6 +11,7 @@ interface MessageListProps {
 
 export function MessageList({ messages, isLoading }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -22,7 +22,10 @@ export function MessageList({ messages, isLoading }: MessageListProps) {
   }
 
   return (
-    <ScrollArea className="flex-1">
+    <div
+      ref={scrollRef}
+      className="flex-1 overflow-y-auto overflow-x-hidden"
+    >
       <div className="flex flex-col gap-1 py-4">
         {messages.map((msg) => (
           <MessageBubble key={msg.id} message={msg} />
@@ -30,6 +33,6 @@ export function MessageList({ messages, isLoading }: MessageListProps) {
         {isLoading && <LoadingIndicator />}
         <div ref={bottomRef} />
       </div>
-    </ScrollArea>
+    </div>
   );
 }
