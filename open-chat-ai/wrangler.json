@@ -1,0 +1,8 @@
+{
+  "name": "open-chat-ai",
+  "compatibility_date": "2025-02-10",
+  "assets": {
+    "directory": "./build/client/",
+    "not_found_handling": "single-page-application"
+  }
+}
