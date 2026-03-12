@@ -66,6 +66,9 @@ importers:
       '@types/react-dom':
         specifier: ^19.2.3
         version: 19.2.3(@types/react@19.2.13)
+      portless:
+        specifier: 0.6.0
+        version: 0.6.0
       shadcn:
         specifier: ^3.8.4
         version: 3.8.4(@types/node@22.19.10)(typescript@5.9.3)
@@ -3231,6 +3234,12 @@ packages:
   playwright@1.59.0-alpha-1771104257000:
     resolution: {integrity: sha512-6SCMMMJaDRsSqiKVLmb2nhtLES7iTYawTWWrQK6UdIGNzXi8lka4sLKRec3L4DnTWwddAvCuRn8035dhNiHzbg==}
     engines: {node: '>=18'}
+    hasBin: true
+
+  portless@0.6.0:
+    resolution: {integrity: sha512-Jjk36bsWGTrqo+uyfKtHaXOfXq80BJ5EOdIRCWCbhYyJ04uV8dVw9/G4u31u1zQWmcE5WrZEYMGAm5XE+tDtXg==}
+    engines: {node: '>=20'}
+    os: [darwin, linux]
     hasBin: true
 
   postcss-selector-parser@7.1.1:
@@ -7073,6 +7082,10 @@ snapshots:
       playwright-core: 1.59.0-alpha-1771104257000
     optionalDependencies:
       fsevents: 2.3.2
+
+  portless@0.6.0:
+    dependencies:
+      chalk: 5.6.2
 
   postcss-selector-parser@7.1.1:
     dependencies:
