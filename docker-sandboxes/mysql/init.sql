@@ -1,0 +1,17 @@
+CREATE DATABASE IF NOT EXISTS sandbox;
+
+USE sandbox;
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  status ENUM('pending', 'running', 'completed', 'failed') NOT NULL DEFAULT 'pending',
+  duration_ms INT NOT NULL,
+  started_at DATETIME NULL,
+  completed_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  worker VARCHAR(255) NOT NULL DEFAULT '',
+  result_message TEXT NULL,
+  error_message TEXT NULL
+);
