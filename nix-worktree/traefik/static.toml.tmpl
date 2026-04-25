@@ -1,0 +1,14 @@
+[entryPoints]
+  [entryPoints.postgres]
+    address = "127.0.0.1:5432"
+
+[providers.file]
+  directory = "__DYNAMIC_DIR__"
+  watch = true
+
+[log]
+  level = "INFO"
+  filePath = "__LOG_FILE__"
+
+[accessLog]
+  filePath = "__ACCESS_LOG_FILE__"
