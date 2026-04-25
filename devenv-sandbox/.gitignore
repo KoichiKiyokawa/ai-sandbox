@@ -1,0 +1,16 @@
+node_modules/
+
+.devenv/
+.direnv/
+
+dist/
+.output/
+.vinxi/
+.tanstack/
+
+.env
+.env.*
+!.env.example
+
+*.log
+.DS_Store
