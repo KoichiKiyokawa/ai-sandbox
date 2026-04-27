@@ -29,7 +29,7 @@
         pnpm dev
     '';
     after = [
-      "db:push@succeeded"
+      "db:seed@succeeded"
     ];
   };
 
@@ -40,7 +40,7 @@
         pnpm exec drizzle-kit studio --host 127.0.0.1 --port ${toString config.processes.studio.ports.http.value}
     '';
     after = [
-      "db:push@succeeded"
+      "db:seed@succeeded"
     ];
   };
 
@@ -79,7 +79,18 @@
       DATABASE_URL="postgres://twitter:twitter@127.0.0.1:$PGPORT/twitter_like" pnpm db:push
     '';
     after = [ "db:prepare@succeeded" ];
-    before = [ "devenv:processes:web" ];
+    before = [ "db:seed" ];
+  };
+
+  tasks."db:seed" = {
+    exec = ''
+      DATABASE_URL="postgres://twitter:twitter@127.0.0.1:$PGPORT/twitter_like" pnpm db:seed
+    '';
+    after = [ "db:push@succeeded" ];
+    before = [
+      "devenv:processes:web"
+      "devenv:processes:studio"
+    ];
   };
 
   enterShell = ''

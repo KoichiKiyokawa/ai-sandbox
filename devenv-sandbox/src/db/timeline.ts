@@ -8,63 +8,8 @@ type AuthUserInput = {
   name?: string | null
 }
 
-export async function ensureSeedData() {
-  const db = getDb()
-  const [existing] = await db.select({ count: sql<number>`count(*)` }).from(users)
-
-  if (Number(existing.count) > 0) {
-    return
-  }
-
-  const seededUsers = await db
-    .insert(users)
-    .values([
-      {
-        avatar: 'TS',
-        handle: 'tanstack_dev',
-        name: 'TanStack Dev',
-        bio: 'Full-stack React experiments.',
-      },
-      {
-        avatar: 'DB',
-        handle: 'drizzle_ops',
-        name: 'Drizzle Ops',
-        bio: 'Typed SQL and tidy schemas.',
-      },
-      {
-        avatar: 'AI',
-        handle: 'sandbox_ai',
-        name: 'Sandbox AI',
-        bio: 'Local-first product sketches.',
-      },
-    ])
-    .returning()
-
-  await db.insert(posts).values([
-    {
-      authorId: seededUsers[0].id,
-      body: 'TanStack Start、Drizzle、Postgres、Tailwind を一つの砂場にまとめました。投稿フォームから DB に保存できます。',
-      likes: 42,
-      reposts: 9,
-    },
-    {
-      authorId: seededUsers[1].id,
-      body: 'devenv で Postgres を起動して、pnpm db:push を実行すると永続化が有効になります。',
-      likes: 18,
-      reposts: 4,
-    },
-    {
-      authorId: seededUsers[2].id,
-      body: 'タイムライン、投稿、いいね、リポスト、トレンド、プロフィール要約まで入れた Twitter ライクな初期版です。',
-      likes: 64,
-      reposts: 15,
-    },
-  ])
-}
-
 export async function getTimeline() {
   const db = getDb()
-  await ensureSeedData()
 
   return await db.query.posts.findMany({
     columns: {
@@ -98,7 +43,6 @@ export async function publishPost(body: string, authUser: AuthUserInput) {
     return
   }
 
-  await ensureSeedData()
   const author = await ensureTimelineUser(authUser)
 
   await db.insert(posts).values({

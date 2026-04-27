@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "DATABASE_URL=postgres://unused drizzle-kit generate",
     "db:push": "drizzle-kit push",
+    "db:seed": "node src/db/seed.ts",
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
