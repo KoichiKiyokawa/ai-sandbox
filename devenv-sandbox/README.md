@@ -20,6 +20,8 @@ devenv up
 
 `DATABASE_URL` は devenv が自動割り当てした Postgres ポートを使って設定します。
 
+`devenv up` は Drizzle Studio も起動します。アプリは `https://echodeck.localhost:1355` で開けます。Drizzle Studio は studio process のログに表示される `https://local.drizzle.studio?...` を開きます。Web の実体ポートは portless が自動割り当てします。Drizzle Studio の実体ポートは devenv の自動ポート割り当てで決まり、`local.drizzle.studio` に渡されます。Git worktree では portless と devenv のポート割り当てにより、複数の worktree を同時起動しても URL と実体ポートは衝突しません。
+
 ## 機能
 
 - タイムライン表示

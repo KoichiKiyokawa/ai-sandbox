@@ -16,6 +16,6 @@ export const auth = betterAuth({
     enabled: true,
     autoSignIn: true,
   },
-  secret: process.env.BETTER_AUTH_SECRET,
+  secret: process.env.AUTH_SECRET,
   plugins: [tanstackStartCookies()],
 })

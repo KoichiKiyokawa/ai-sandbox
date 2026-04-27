@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev",
+    "dev": "portless run --force --name echodeck vite dev --clearScreen=false",
     "build": "vite build",
     "start": "node dist/server/server.js",
     "typecheck": "tsc --noEmit",
@@ -30,6 +30,7 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.1",
     "drizzle-kit": "0.31.10",
+    "portless": "0.10.3",
     "typescript": "6.0.3",
     "vite": "8.0.10"
   }

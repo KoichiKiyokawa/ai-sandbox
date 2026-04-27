@@ -6,7 +6,9 @@
     pkgs.pnpm
   ];
 
-  env.BETTER_AUTH_SECRET = "development-only-better-auth-secret-change-before-production";
+  env.AUTH_SECRET = "development-only-auth-secret-change-before-production";
+  env.PORTLESS_PORT = "1355";
+  env.PORTLESS_SYNC_HOSTS = "0";
 
   services.postgres = {
     enable = true;
@@ -22,9 +24,20 @@
   processes.web = {
     ports.http.allocate = 5173;
     exec = ''
-      BETTER_AUTH_URL="http://127.0.0.1:${toString config.processes.web.ports.http.value}" \
-        DATABASE_URL="postgres://twitter:twitter@127.0.0.1:$PGPORT/twitter_like" \
-        pnpm dev -- --host 127.0.0.1 --port ${toString config.processes.web.ports.http.value}
+      DATABASE_URL="postgres://twitter:twitter@127.0.0.1:$PGPORT/twitter_like" \
+        PORTLESS_APP_PORT=${toString config.processes.web.ports.http.value} \
+        pnpm dev
+    '';
+    after = [
+      "db:push@succeeded"
+    ];
+  };
+
+  processes.studio = {
+    ports.http.allocate = 4983;
+    exec = ''
+      DATABASE_URL="postgres://twitter:twitter@127.0.0.1:$PGPORT/twitter_like" \
+        pnpm exec drizzle-kit studio --host 127.0.0.1 --port ${toString config.processes.studio.ports.http.value}
     '';
     after = [
       "db:push@succeeded"
@@ -72,5 +85,7 @@
   enterShell = ''
     export DATABASE_URL="postgres://twitter:twitter@127.0.0.1:$PGPORT/twitter_like"
     echo "devenv ready: pnpm install && devenv up"
+    echo "app: https://echodeck.localhost:1355"
+    echo "studio: check the studio process log for the local.drizzle.studio URL"
   '';
 }
