@@ -1,0 +1,6 @@
+{
+  "notes.localhost": "http://127.0.0.1:5173",
+  "edit.localhost": "http://127.0.0.1:5175",
+  "delete.localhost": "http://127.0.0.1:5176",
+  "search.localhost": "http://127.0.0.1:5177"
+}

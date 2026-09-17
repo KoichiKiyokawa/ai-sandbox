@@ -1,0 +1,332 @@
+diff --git a/api/handler.go b/api/handler.go
+index 5316737..b4b8860 100644
+--- a/api/handler.go
++++ b/api/handler.go
+@@ -3,9 +3,11 @@ package main
+ import (
+ 	"context"
+ 	"encoding/json"
++	"errors"
+ 	"io"
+ 	"log"
+ 	"net/http"
++	"strconv"
+ 	"strings"
+ 	"time"
+ 	"unicode/utf8"
+@@ -21,6 +23,32 @@ type noteStore interface {
+ 	Ping(context.Context) error
+ 	List(context.Context) ([]Note, error)
+ 	Create(context.Context, string) (Note, error)
++	Update(context.Context, int64, string) (Note, error)
++}
++
++var errNoteNotFound = errors.New("note not found")
++
++func decodeNoteBody(w http.ResponseWriter, r *http.Request) (string, bool) {
++	r.Body = http.MaxBytesReader(w, r.Body, 8192)
++	var input struct {
++		Body string `json:"body"`
++	}
++	dec := json.NewDecoder(r.Body)
++	dec.DisallowUnknownFields()
++	if err := dec.Decode(&input); err != nil {
++		jsonResponse(w, 400, map[string]string{"error": "正しいJSONでメモを指定してください。"})
++		return "", false
++	}
++	if err := dec.Decode(new(any)); err != io.EOF {
++		jsonResponse(w, 400, map[string]string{"error": "JSONは1件だけ指定してください。"})
++		return "", false
++	}
++	input.Body = strings.TrimSpace(input.Body)
++	if n := utf8.RuneCountInString(input.Body); n < 1 || n > 500 {
++		jsonResponse(w, 400, map[string]string{"error": "メモは1〜500文字で入力してください。"})
++		return "", false
++	}
++	return input.Body, true
+ }
+ 
+ func jsonResponse(w http.ResponseWriter, status int, value any) {
+@@ -58,34 +86,43 @@ func newHandler(store noteStore) http.Handler {
+ 		jsonResponse(w, 200, notes)
+ 	})
+ 	mux.HandleFunc("POST /api/notes", func(w http.ResponseWriter, r *http.Request) {
+-		r.Body = http.MaxBytesReader(w, r.Body, 8192)
+-		var input struct {
+-			Body string `json:"body"`
++		body, ok := decodeNoteBody(w, r)
++		if !ok {
++			return
+ 		}
+-		dec := json.NewDecoder(r.Body)
+-		dec.DisallowUnknownFields()
+-		if err := dec.Decode(&input); err != nil {
+-			jsonResponse(w, 400, map[string]string{"error": "正しいJSONでメモを指定してください。"})
++		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
++		defer cancel()
++		note, err := store.Create(ctx, body)
++		if err != nil {
++			log.Printf("create: %v", err)
++			jsonResponse(w, 500, map[string]string{"error": "メモを保存できませんでした。"})
+ 			return
+ 		}
+-		if err := dec.Decode(new(any)); err != io.EOF {
+-			jsonResponse(w, 400, map[string]string{"error": "JSONは1件だけ指定してください。"})
++		jsonResponse(w, 201, note)
++	})
++	mux.HandleFunc("PATCH /api/notes/{id}", func(w http.ResponseWriter, r *http.Request) {
++		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
++		if err != nil || id < 1 {
++			jsonResponse(w, 400, map[string]string{"error": "正しいメモIDを指定してください。"})
+ 			return
+ 		}
+-		input.Body = strings.TrimSpace(input.Body)
+-		if n := utf8.RuneCountInString(input.Body); n < 1 || n > 500 {
+-			jsonResponse(w, 400, map[string]string{"error": "メモは1〜500文字で入力してください。"})
++		body, ok := decodeNoteBody(w, r)
++		if !ok {
+ 			return
+ 		}
+ 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+ 		defer cancel()
+-		note, err := store.Create(ctx, input.Body)
++		note, err := store.Update(ctx, id, body)
++		if errors.Is(err, errNoteNotFound) {
++			jsonResponse(w, 404, map[string]string{"error": "メモが見つかりません。"})
++			return
++		}
+ 		if err != nil {
+-			log.Printf("create: %v", err)
+-			jsonResponse(w, 500, map[string]string{"error": "メモを保存できませんでした。"})
++			log.Printf("update: %v", err)
++			jsonResponse(w, 500, map[string]string{"error": "メモを更新できませんでした。"})
+ 			return
+ 		}
+-		jsonResponse(w, 201, note)
++		jsonResponse(w, 200, note)
+ 	})
+ 	return mux
+ }
+diff --git a/api/handler_test.go b/api/handler_test.go
+index 2d7cc86..2ff7ee2 100644
+--- a/api/handler_test.go
++++ b/api/handler_test.go
+@@ -8,6 +8,7 @@ import (
+ 	"net/http/httptest"
+ 	"strings"
+ 	"testing"
++	"time"
+ )
+ 
+ type memoryStore struct {
+@@ -26,6 +27,19 @@ func (s *memoryStore) Create(_ context.Context, body string) (Note, error) {
+ 	return n, nil
+ }
+ 
++func (s *memoryStore) Update(_ context.Context, id int64, body string) (Note, error) {
++	if s.err != nil {
++		return Note{}, s.err
++	}
++	for i := range s.notes {
++		if s.notes[i].ID == id {
++			s.notes[i].Body = body
++			return s.notes[i], nil
++		}
++	}
++	return Note{}, errNoteNotFound
++}
++
+ func TestRegisterAndList(t *testing.T) {
+ 	h := newHandler(&memoryStore{})
+ 	w := httptest.NewRecorder()
+@@ -64,6 +78,70 @@ func TestRejectInvalidNotes(t *testing.T) {
+ 	}
+ }
+ 
++func TestUpdateNote(t *testing.T) {
++	createdAt := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
++	s := &memoryStore{notes: []Note{{ID: 1, Body: "更新前", CreatedAt: createdAt}}}
++	h := newHandler(s)
++
++	for _, body := range []string{`{"body":"  更新後  "}`, `{"body":"更新後"}`} {
++		w := httptest.NewRecorder()
++		h.ServeHTTP(w, httptest.NewRequest("PATCH", "/api/notes/1", strings.NewReader(body)))
++		if w.Code != http.StatusOK {
++			t.Fatalf("update: %d %s", w.Code, w.Body.String())
++		}
++		var updated Note
++		if err := json.Unmarshal(w.Body.Bytes(), &updated); err != nil {
++			t.Fatal(err)
++		}
++		if updated.ID != 1 || updated.Body != "更新後" || !updated.CreatedAt.Equal(createdAt) {
++			t.Fatalf("unexpected note: %+v", updated)
++		}
++	}
++	w := httptest.NewRecorder()
++	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/notes", nil))
++	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"body":"更新後"`) {
++		t.Fatalf("list: %d %s", w.Code, w.Body.String())
++	}
++}
++
++func TestRejectInvalidUpdates(t *testing.T) {
++	tests := []struct {
++		name string
++		path string
++		body string
++	}{
++		{"zero id", "/api/notes/0", `{"body":"ok"}`},
++		{"negative id", "/api/notes/-1", `{"body":"ok"}`},
++		{"invalid id", "/api/notes/not-a-number", `{"body":"ok"}`},
++		{"overflow id", "/api/notes/9223372036854775808", `{"body":"ok"}`},
++		{"missing body", "/api/notes/1", `{}`},
++		{"invalid json", "/api/notes/1", `{`},
++		{"blank body", "/api/notes/1", `{"body":"  "}`},
++		{"wrong body type", "/api/notes/1", `{"body":1}`},
++		{"unknown field", "/api/notes/1", `{"body":"ok","extra":true}`},
++		{"multiple json", "/api/notes/1", `{"body":"ok"} {}`},
++		{"too long", "/api/notes/1", `{"body":"` + strings.Repeat("あ", 501) + `"}`},
++	}
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			s := &memoryStore{notes: []Note{{ID: 1, Body: "更新前"}}}
++			w := httptest.NewRecorder()
++			newHandler(s).ServeHTTP(w, httptest.NewRequest("PATCH", tc.path, strings.NewReader(tc.body)))
++			if w.Code != http.StatusBadRequest || s.notes[0].Body != "更新前" {
++				t.Fatalf("status=%d note=%q body=%s", w.Code, s.notes[0].Body, w.Body.String())
++			}
++		})
++	}
++}
++
++func TestUpdateMissingNote(t *testing.T) {
++	w := httptest.NewRecorder()
++	newHandler(&memoryStore{}).ServeHTTP(w, httptest.NewRequest("PATCH", "/api/notes/99", strings.NewReader(`{"body":"ok"}`)))
++	if w.Code != http.StatusNotFound {
++		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
++	}
++}
++
+ func TestEmptyListIsArray(t *testing.T) {
+ 	w := httptest.NewRecorder()
+ 	newHandler(&memoryStore{}).ServeHTTP(w, httptest.NewRequest("GET", "/api/notes", nil))
+@@ -78,6 +156,7 @@ func TestDatabaseFailures(t *testing.T) {
+ 		status             int
+ 	}{
+ 		{"GET", "/api/health", "", 503}, {"GET", "/api/notes", "", 500}, {"POST", "/api/notes", `{"body":"ok"}`, 500},
++		{"PATCH", "/api/notes/1", `{"body":"ok"}`, 500},
+ 	} {
+ 		w := httptest.NewRecorder()
+ 		newHandler(&memoryStore{err: errors.New("secret connection detail")}).ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
+diff --git a/api/store.go b/api/store.go
+index 6032d21..5e1fb2d 100644
+--- a/api/store.go
++++ b/api/store.go
+@@ -3,6 +3,7 @@ package main
+ import (
+ 	"context"
+ 	"database/sql"
++	"errors"
+ )
+ 
+ type mysqlStore struct{ db *sql.DB }
+@@ -37,3 +38,15 @@ func (s *mysqlStore) Create(ctx context.Context, body string) (Note, error) {
+ 	err = s.db.QueryRowContext(ctx, "SELECT id, body, created_at FROM notes WHERE id = ?", id).Scan(&n.ID, &n.Body, &n.CreatedAt)
+ 	return n, err
+ }
++
++func (s *mysqlStore) Update(ctx context.Context, id int64, body string) (Note, error) {
++	if _, err := s.db.ExecContext(ctx, "UPDATE notes SET body = ? WHERE id = ?", body, id); err != nil {
++		return Note{}, err
++	}
++	var n Note
++	err := s.db.QueryRowContext(ctx, "SELECT id, body, created_at FROM notes WHERE id = ?", id).Scan(&n.ID, &n.Body, &n.CreatedAt)
++	if errors.Is(err, sql.ErrNoRows) {
++		return Note{}, errNoteNotFound
++	}
++	return n, err
++}
+diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
+index 6f118cb..f4435ff 100644
+--- a/frontend/src/App.tsx
++++ b/frontend/src/App.tsx
+@@ -16,9 +16,13 @@ export default function App() {
+   const [body, setBody] = useState('')
+   const [loading, setLoading] = useState(true)
+   const [saving, setSaving] = useState(false)
++  const [editingId, setEditingId] = useState<number | null>(null)
++  const [editBody, setEditBody] = useState('')
++  const [editSaving, setEditSaving] = useState(false)
+   const [error, setError] = useState('')
+   const [message, setMessage] = useState('')
+   const length = Array.from(body.trim()).length
++  const editLength = Array.from(editBody.trim()).length
+ 
+   async function load() {
+     setLoading(true)
+@@ -49,6 +53,41 @@ export default function App() {
+     finally { setSaving(false) }
+   }
+ 
++  function startEditing(note: Note) {
++    if (editSaving) return
++    setEditingId(note.id)
++    setEditBody(note.body)
++    setError('')
++    setMessage('')
++  }
++
++  function cancelEditing() {
++    if (editSaving) return
++    setEditingId(null)
++    setEditBody('')
++    setError('')
++  }
++
++  async function saveEdit(event: FormEvent<HTMLFormElement>, id: number) {
++    event.preventDefault()
++    if (editLength < 1 || editLength > 500 || editSaving) return
++    setEditSaving(true)
++    setError('')
++    setMessage('')
++    try {
++      const note = await request<Note>(`/api/notes/${id}`, {
++        method: 'PATCH',
++        headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({ body: editBody.trim() }),
++      })
++      setNotes((current) => current.map((item) => item.id === id ? note : item))
++      setEditingId(null)
++      setEditBody('')
++      setMessage('メモを更新しました。')
++    } catch (e) { setError(e instanceof Error ? e.message : 'メモを更新できませんでした。') }
++    finally { setEditSaving(false) }
++  }
++
+   return (
+     <div className="min-h-screen">
+       <header className="border-b border-emerald-950/10">
+@@ -88,7 +127,22 @@ export default function App() {
+             {!loading && !error && notes.length === 0 && <div className="rounded-2xl border border-dashed border-emerald-950/20 p-10 text-center"><p className="font-medium">最初のメモを残しましょう。</p><p className="mt-2 text-sm text-emerald-950/55">保存すると、ここに表示されます。</p></div>}
+             <ol className="space-y-3">
+               {notes.map((note) => <li key={note.id} className="rounded-xl border border-emerald-950/10 bg-white/70 p-5">
+-                <p className="whitespace-pre-wrap break-words text-sm leading-7">{note.body}</p>
++                {editingId === note.id ? <form onSubmit={(event) => void saveEdit(event, note.id)}>
++                  <label htmlFor={`edit-body-${note.id}`} className="mb-2 block text-sm font-medium">メモを編集</label>
++                  <textarea id={`edit-body-${note.id}`} value={editBody} onChange={(event) => setEditBody(event.target.value)} disabled={editSaving} rows={4}
++                    aria-describedby={`edit-limit-${note.id}`}
++                    className="w-full resize-y rounded-xl border border-emerald-950/15 bg-stone-50 p-4 text-sm leading-7 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/15 disabled:opacity-60" />
++                  <div className="mt-3 flex items-center justify-between gap-3">
++                    <span id={`edit-limit-${note.id}`} className={`font-mono text-xs ${editLength > 500 ? 'text-red-700' : 'text-emerald-950/50'}`}>{editLength} / 500文字</span>
++                    <div className="flex gap-2">
++                      <button type="button" onClick={cancelEditing} disabled={editSaving} className="rounded-lg border border-emerald-950/15 px-3 py-2 text-sm text-emerald-900 disabled:opacity-40">取り消し</button>
++                      <button disabled={editSaving || editLength < 1 || editLength > 500} className="rounded-lg bg-emerald-900 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40">{editSaving ? '保存中…' : '保存'}</button>
++                    </div>
++                  </div>
++                </form> : <div className="flex items-start justify-between gap-4">
++                  <p className="whitespace-pre-wrap break-words text-sm leading-7">{note.body}</p>
++                  <button type="button" onClick={() => startEditing(note)} disabled={editSaving} className="shrink-0 text-sm text-emerald-700 underline decoration-emerald-700/30 underline-offset-4 disabled:opacity-40">編集</button>
++                </div>}
+                 <time dateTime={note.created_at} className="mt-4 block font-mono text-xs text-emerald-950/45">{new Date(note.created_at).toLocaleString('ja-JP')}</time>
+               </li>)}
+             </ol>

@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    margin: 0;
+    background: #f5f6ef;
+    color: #102c29;
+    font-family: Inter, "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  }
+  button, a { -webkit-tap-highlight-color: transparent; }
+  button:not(:disabled) { cursor: pointer; }
+  :focus-visible { outline: 2px solid #047857; outline-offset: 4px; }
+}

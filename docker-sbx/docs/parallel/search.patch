@@ -1,0 +1,206 @@
+diff --git a/api/handler.go b/api/handler.go
+index 5316737..9278cb6 100644
+--- a/api/handler.go
++++ b/api/handler.go
+@@ -19,7 +19,7 @@ type Note struct {
+ 
+ type noteStore interface {
+ 	Ping(context.Context) error
+-	List(context.Context) ([]Note, error)
++	List(context.Context, string) ([]Note, error)
+ 	Create(context.Context, string) (Note, error)
+ }
+ 
+@@ -46,7 +46,8 @@ func newHandler(store noteStore) http.Handler {
+ 	mux.HandleFunc("GET /api/notes", func(w http.ResponseWriter, r *http.Request) {
+ 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+ 		defer cancel()
+-		notes, err := store.List(ctx)
++		query := strings.TrimSpace(r.URL.Query().Get("q"))
++		notes, err := store.List(ctx, query)
+ 		if err != nil {
+ 			log.Printf("list: %v", err)
+ 			jsonResponse(w, 500, map[string]string{"error": "メモを取得できませんでした。"})
+diff --git a/api/handler_test.go b/api/handler_test.go
+index 2d7cc86..091a3af 100644
+--- a/api/handler_test.go
++++ b/api/handler_test.go
+@@ -11,12 +11,16 @@ import (
+ )
+ 
+ type memoryStore struct {
+-	notes []Note
+-	err   error
++	notes     []Note
++	err       error
++	listQuery string
+ }
+ 
+-func (s *memoryStore) Ping(context.Context) error           { return s.err }
+-func (s *memoryStore) List(context.Context) ([]Note, error) { return s.notes, s.err }
++func (s *memoryStore) Ping(context.Context) error { return s.err }
++func (s *memoryStore) List(_ context.Context, query string) ([]Note, error) {
++	s.listQuery = query
++	return s.notes, s.err
++}
+ func (s *memoryStore) Create(_ context.Context, body string) (Note, error) {
+ 	if s.err != nil {
+ 		return Note{}, s.err
+@@ -72,6 +76,28 @@ func TestEmptyListIsArray(t *testing.T) {
+ 	}
+ }
+ 
++func TestListPassesTrimmedSearchQuery(t *testing.T) {
++	for _, tc := range []struct {
++		name, path, want string
++	}{
++		{"missing", "/api/notes", ""},
++		{"blank", "/api/notes?q=%20%20%20", ""},
++		{"special characters", "/api/notes?q=%20%20%E5%AE%9F%E9%A8%93%25_%20%20", "実験%_"},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			store := &memoryStore{}
++			w := httptest.NewRecorder()
++			newHandler(store).ServeHTTP(w, httptest.NewRequest("GET", tc.path, nil))
++			if w.Code != http.StatusOK {
++				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
++			}
++			if store.listQuery != tc.want {
++				t.Fatalf("query=%q, want %q", store.listQuery, tc.want)
++			}
++		})
++	}
++}
++
+ func TestDatabaseFailures(t *testing.T) {
+ 	for _, tc := range []struct {
+ 		method, path, body string
+diff --git a/api/store.go b/api/store.go
+index 6032d21..c0644f7 100644
+--- a/api/store.go
++++ b/api/store.go
+@@ -8,8 +8,14 @@ import (
+ type mysqlStore struct{ db *sql.DB }
+ 
+ func (s *mysqlStore) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
+-func (s *mysqlStore) List(ctx context.Context) ([]Note, error) {
+-	rows, err := s.db.QueryContext(ctx, "SELECT id, body, created_at FROM notes ORDER BY id DESC LIMIT 100")
++func (s *mysqlStore) List(ctx context.Context, query string) ([]Note, error) {
++	statement := "SELECT id, body, created_at FROM notes ORDER BY id DESC LIMIT 100"
++	args := []any{}
++	if query != "" {
++		statement = "SELECT id, body, created_at FROM notes WHERE INSTR(body, ?) > 0 ORDER BY id DESC LIMIT 100"
++		args = append(args, query)
++	}
++	rows, err := s.db.QueryContext(ctx, statement, args...)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
+index 6f118cb..f3f57d6 100644
+--- a/frontend/src/App.tsx
++++ b/frontend/src/App.tsx
+@@ -1,4 +1,4 @@
+-import { useEffect, useState, type FormEvent } from 'react'
++import { useEffect, useRef, useState, type FormEvent } from 'react'
+ 
+ type Note = { id: number; body: string; created_at: string }
+ 
+@@ -14,21 +14,48 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
+ export default function App() {
+   const [notes, setNotes] = useState<Note[]>([])
+   const [body, setBody] = useState('')
++  const [searchInput, setSearchInput] = useState('')
++  const [searchQuery, setSearchQuery] = useState('')
+   const [loading, setLoading] = useState(true)
+   const [saving, setSaving] = useState(false)
+   const [error, setError] = useState('')
+   const [message, setMessage] = useState('')
++  const requestId = useRef(0)
++  const currentQuery = useRef('')
+   const length = Array.from(body.trim()).length
+ 
+-  async function load() {
++  async function load(query: string) {
++    const id = ++requestId.current
+     setLoading(true)
+     setError('')
+-    try { setNotes(await request<Note[]>('/api/notes')) }
+-    catch (e) { setError(e instanceof Error ? e.message : 'メモを取得できませんでした。') }
+-    finally { setLoading(false) }
++    const path = query ? `/api/notes?${new URLSearchParams({ q: query })}` : '/api/notes'
++    try {
++      const loadedNotes = await request<Note[]>(path)
++      if (id === requestId.current) setNotes(loadedNotes)
++    } catch (e) {
++      if (id === requestId.current) setError(e instanceof Error ? e.message : 'メモを取得できませんでした。')
++    } finally {
++      if (id === requestId.current) setLoading(false)
++    }
++  }
++
++  useEffect(() => { void load('') }, [])
++
++  function search(event: FormEvent<HTMLFormElement>) {
++    event.preventDefault()
++    const query = searchInput.trim()
++    setSearchInput(query)
++    setSearchQuery(query)
++    currentQuery.current = query
++    void load(query)
+   }
+ 
+-  useEffect(() => { void load() }, [])
++  function clearSearch() {
++    setSearchInput('')
++    setSearchQuery('')
++    currentQuery.current = ''
++    void load('')
++  }
+ 
+   async function submit(event: FormEvent<HTMLFormElement>) {
+     event.preventDefault()
+@@ -37,14 +64,14 @@ export default function App() {
+     setError('')
+     setMessage('')
+     try {
+-      const note = await request<Note>('/api/notes', {
++      await request<Note>('/api/notes', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ body: body.trim() }),
+       })
+-      setNotes((current) => [note, ...current].slice(0, 100))
+       setBody('')
+       setMessage('メモを保存しました。')
++      await load(currentQuery.current)
+     } catch (e) { setError(e instanceof Error ? e.message : 'メモを保存できませんでした。') }
+     finally { setSaving(false) }
+   }
+@@ -80,12 +107,24 @@ export default function App() {
+             <p role="status" className="mt-4 min-h-5 text-sm text-emerald-700">{message}</p>
+           </section>
+           <section aria-labelledby="note-list" aria-busy={loading}>
++            <form onSubmit={search} className="mb-5 flex flex-col gap-3 sm:flex-row">
++              <label htmlFor="search" className="sr-only">メモを検索</label>
++              <input id="search" type="search" value={searchInput} onChange={(e) => setSearchInput(e.target.value)}
++                placeholder="メモを検索" disabled={loading || saving}
++                className="min-w-0 flex-1 rounded-xl border border-emerald-950/15 bg-white px-4 py-3 text-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/15 disabled:opacity-60" />
++              <div className="flex gap-2">
++                <button disabled={loading || saving} className="rounded-xl bg-emerald-900 px-5 py-3 text-sm font-medium text-white transition hover:bg-emerald-800 disabled:opacity-40">検索</button>
++                {searchQuery && <button type="button" onClick={clearSearch} disabled={loading || saving} className="rounded-xl border border-emerald-950/15 px-4 py-3 text-sm text-emerald-800 disabled:opacity-40">解除</button>}
++              </div>
++            </form>
+             <div className="mb-5 flex items-center justify-between">
+               <h2 id="note-list" className="text-lg font-semibold">保存したメモ <span className="ml-2 font-mono text-sm text-emerald-950/45">{notes.length}</span></h2>
+-              <button onClick={() => void load()} disabled={loading || saving} className="text-sm text-emerald-700 underline decoration-emerald-700/30 underline-offset-4 disabled:opacity-40">{loading ? '読み込み中…' : '再読み込み'}</button>
++              <button onClick={() => void load(currentQuery.current)} disabled={loading || saving} className="text-sm text-emerald-700 underline decoration-emerald-700/30 underline-offset-4 disabled:opacity-40">{loading ? '読み込み中…' : '再読み込み'}</button>
+             </div>
+             {error && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</p>}
+-            {!loading && !error && notes.length === 0 && <div className="rounded-2xl border border-dashed border-emerald-950/20 p-10 text-center"><p className="font-medium">最初のメモを残しましょう。</p><p className="mt-2 text-sm text-emerald-950/55">保存すると、ここに表示されます。</p></div>}
++            {!loading && !error && notes.length === 0 && (searchQuery
++              ? <div className="rounded-2xl border border-dashed border-emerald-950/20 p-10 text-center"><p className="font-medium">該当するメモはありません。</p><p className="mt-2 text-sm text-emerald-950/55">検索条件を変えてお試しください。</p></div>
++              : <div className="rounded-2xl border border-dashed border-emerald-950/20 p-10 text-center"><p className="font-medium">最初のメモを残しましょう。</p><p className="mt-2 text-sm text-emerald-950/55">保存すると、ここに表示されます。</p></div>)}
+             <ol className="space-y-3">
+               {notes.map((note) => <li key={note.id} className="rounded-xl border border-emerald-950/10 bg-white/70 p-5">
+                 <p className="whitespace-pre-wrap break-words text-sm leading-7">{note.body}</p>

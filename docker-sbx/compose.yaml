@@ -1,0 +1,72 @@
+services:
+  db:
+    restart: unless-stopped
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: sandbox
+      MYSQL_USER: app
+      MYSQL_PASSWORD: app-local-password
+      MYSQL_ROOT_PASSWORD: root-local-password
+      TZ: UTC
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_PASSWORD mysql -h 127.0.0.1 -u$$MYSQL_USER $$MYSQL_DATABASE -e 'SELECT 1 FROM notes LIMIT 1'"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 20s
+  api:
+    restart: unless-stopped
+    build: ./api
+    environment:
+      DB_ADDRESS: db:3306
+      DB_USER: app
+      DB_PASSWORD: app-local-password
+      DB_NAME: sandbox
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    develop:
+      watch:
+        - action: rebuild
+          path: ./api
+  frontend:
+    restart: unless-stopped
+    build: ./frontend
+    environment:
+      API_TARGET: http://api:8080
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-5173}:5173"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5173/"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    develop:
+      watch:
+        - action: sync
+          path: ./frontend/src
+          target: /app/src
+        - action: sync
+          path: ./frontend/index.html
+          target: /app/index.html
+        - action: rebuild
+          path: ./frontend/package.json
+        - action: rebuild
+          path: ./frontend/pnpm-lock.yaml
+        - action: rebuild
+          path: ./frontend/pnpm-workspace.yaml
+        - action: rebuild
+          path: ./frontend/vite.config.ts
+volumes:
+  mysql-data:

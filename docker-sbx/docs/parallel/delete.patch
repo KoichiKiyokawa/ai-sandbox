@@ -1,0 +1,205 @@
+diff --git a/api/handler.go b/api/handler.go
+index 5316737..2afbe8c 100644
+--- a/api/handler.go
++++ b/api/handler.go
+@@ -6,6 +6,7 @@ import (
+ 	"io"
+ 	"log"
+ 	"net/http"
++	"strconv"
+ 	"strings"
+ 	"time"
+ 	"unicode/utf8"
+@@ -21,6 +22,7 @@ type noteStore interface {
+ 	Ping(context.Context) error
+ 	List(context.Context) ([]Note, error)
+ 	Create(context.Context, string) (Note, error)
++	Delete(context.Context, int64) (bool, error)
+ }
+ 
+ func jsonResponse(w http.ResponseWriter, status int, value any) {
+@@ -87,5 +89,25 @@ func newHandler(store noteStore) http.Handler {
+ 		}
+ 		jsonResponse(w, 201, note)
+ 	})
++	mux.HandleFunc("DELETE /api/notes/{id}", func(w http.ResponseWriter, r *http.Request) {
++		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
++		if err != nil || id <= 0 {
++			jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "正しいメモIDを指定してください。"})
++			return
++		}
++		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
++		defer cancel()
++		deleted, err := store.Delete(ctx, id)
++		if err != nil {
++			log.Printf("delete: %v", err)
++			jsonResponse(w, http.StatusInternalServerError, map[string]string{"error": "メモを削除できませんでした。"})
++			return
++		}
++		if !deleted {
++			jsonResponse(w, http.StatusNotFound, map[string]string{"error": "メモが見つかりません。"})
++			return
++		}
++		w.WriteHeader(http.StatusNoContent)
++	})
+ 	return mux
+ }
+diff --git a/api/handler_test.go b/api/handler_test.go
+index 2d7cc86..d7b7e1b 100644
+--- a/api/handler_test.go
++++ b/api/handler_test.go
+@@ -25,6 +25,18 @@ func (s *memoryStore) Create(_ context.Context, body string) (Note, error) {
+ 	s.notes = append(s.notes, n)
+ 	return n, nil
+ }
++func (s *memoryStore) Delete(_ context.Context, id int64) (bool, error) {
++	if s.err != nil {
++		return false, s.err
++	}
++	for i, note := range s.notes {
++		if note.ID == id {
++			s.notes = append(s.notes[:i], s.notes[i+1:]...)
++			return true, nil
++		}
++	}
++	return false, nil
++}
+ 
+ func TestRegisterAndList(t *testing.T) {
+ 	h := newHandler(&memoryStore{})
+@@ -72,12 +84,47 @@ func TestEmptyListIsArray(t *testing.T) {
+ 	}
+ }
+ 
++func TestDeleteNote(t *testing.T) {
++	s := &memoryStore{notes: []Note{{ID: 1, Body: "残す"}, {ID: 2, Body: "削除する"}}}
++	w := httptest.NewRecorder()
++	newHandler(s).ServeHTTP(w, httptest.NewRequest("DELETE", "/api/notes/2", nil))
++
++	if w.Code != http.StatusNoContent || w.Body.Len() != 0 {
++		t.Fatalf("delete: %d %q", w.Code, w.Body.String())
++	}
++	if len(s.notes) != 1 || s.notes[0].ID != 1 {
++		t.Fatalf("notes after delete: %+v", s.notes)
++	}
++}
++
++func TestRejectInvalidDeleteIDs(t *testing.T) {
++	for _, path := range []string{"/api/notes/0", "/api/notes/-1", "/api/notes/not-a-number", "/api/notes/9223372036854775808"} {
++		t.Run(path, func(t *testing.T) {
++			s := &memoryStore{notes: []Note{{ID: 1, Body: "残す"}}}
++			w := httptest.NewRecorder()
++			newHandler(s).ServeHTTP(w, httptest.NewRequest("DELETE", path, nil))
++			if w.Code != http.StatusBadRequest || len(s.notes) != 1 {
++				t.Fatalf("status=%d notes=%+v", w.Code, s.notes)
++			}
++		})
++	}
++}
++
++func TestDeleteMissingNote(t *testing.T) {
++	w := httptest.NewRecorder()
++	newHandler(&memoryStore{}).ServeHTTP(w, httptest.NewRequest("DELETE", "/api/notes/42", nil))
++	if w.Code != http.StatusNotFound {
++		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
++	}
++}
++
+ func TestDatabaseFailures(t *testing.T) {
+ 	for _, tc := range []struct {
+ 		method, path, body string
+ 		status             int
+ 	}{
+ 		{"GET", "/api/health", "", 503}, {"GET", "/api/notes", "", 500}, {"POST", "/api/notes", `{"body":"ok"}`, 500},
++		{"DELETE", "/api/notes/1", "", 500},
+ 	} {
+ 		w := httptest.NewRecorder()
+ 		newHandler(&memoryStore{err: errors.New("secret connection detail")}).ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
+diff --git a/api/store.go b/api/store.go
+index 6032d21..151114f 100644
+--- a/api/store.go
++++ b/api/store.go
+@@ -37,3 +37,15 @@ func (s *mysqlStore) Create(ctx context.Context, body string) (Note, error) {
+ 	err = s.db.QueryRowContext(ctx, "SELECT id, body, created_at FROM notes WHERE id = ?", id).Scan(&n.ID, &n.Body, &n.CreatedAt)
+ 	return n, err
+ }
++
++func (s *mysqlStore) Delete(ctx context.Context, id int64) (bool, error) {
++	result, err := s.db.ExecContext(ctx, "DELETE FROM notes WHERE id = ?", id)
++	if err != nil {
++		return false, err
++	}
++	rows, err := result.RowsAffected()
++	if err != nil {
++		return false, err
++	}
++	return rows > 0, nil
++}
+diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
+index 6f118cb..027edd5 100644
+--- a/frontend/src/App.tsx
++++ b/frontend/src/App.tsx
+@@ -11,11 +11,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
+   return response.json() as Promise<T>
+ }
+ 
++async function requestNoContent(path: string, init?: RequestInit): Promise<void> {
++  const response = await fetch(path, { ...init, signal: AbortSignal.timeout(10_000) })
++  if (!response.ok) {
++    const payload = await response.json().catch(() => null)
++    throw new Error(payload?.error ?? `通信に失敗しました（HTTP ${response.status}）。`)
++  }
++}
++
+ export default function App() {
+   const [notes, setNotes] = useState<Note[]>([])
+   const [body, setBody] = useState('')
+   const [loading, setLoading] = useState(true)
+   const [saving, setSaving] = useState(false)
++  const [deletingId, setDeletingId] = useState<number | null>(null)
+   const [error, setError] = useState('')
+   const [message, setMessage] = useState('')
+   const length = Array.from(body.trim()).length
+@@ -49,6 +58,19 @@ export default function App() {
+     finally { setSaving(false) }
+   }
+ 
++  async function remove(note: Note) {
++    if (deletingId !== null || !window.confirm(`「${note.body}」を削除しますか？`)) return
++    setDeletingId(note.id)
++    setError('')
++    setMessage('')
++    try {
++      await requestNoContent(`/api/notes/${note.id}`, { method: 'DELETE' })
++      setNotes((current) => current.filter((item) => item.id !== note.id))
++      setMessage('メモを削除しました。')
++    } catch (e) { setError(e instanceof Error ? e.message : 'メモを削除できませんでした。') }
++    finally { setDeletingId(null) }
++  }
++
+   return (
+     <div className="min-h-screen">
+       <header className="border-b border-emerald-950/10">
+@@ -82,14 +104,20 @@ export default function App() {
+           <section aria-labelledby="note-list" aria-busy={loading}>
+             <div className="mb-5 flex items-center justify-between">
+               <h2 id="note-list" className="text-lg font-semibold">保存したメモ <span className="ml-2 font-mono text-sm text-emerald-950/45">{notes.length}</span></h2>
+-              <button onClick={() => void load()} disabled={loading || saving} className="text-sm text-emerald-700 underline decoration-emerald-700/30 underline-offset-4 disabled:opacity-40">{loading ? '読み込み中…' : '再読み込み'}</button>
++              <button onClick={() => void load()} disabled={loading || saving || deletingId !== null} className="text-sm text-emerald-700 underline decoration-emerald-700/30 underline-offset-4 disabled:opacity-40">{loading ? '読み込み中…' : '再読み込み'}</button>
+             </div>
+             {error && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</p>}
+             {!loading && !error && notes.length === 0 && <div className="rounded-2xl border border-dashed border-emerald-950/20 p-10 text-center"><p className="font-medium">最初のメモを残しましょう。</p><p className="mt-2 text-sm text-emerald-950/55">保存すると、ここに表示されます。</p></div>}
+             <ol className="space-y-3">
+               {notes.map((note) => <li key={note.id} className="rounded-xl border border-emerald-950/10 bg-white/70 p-5">
+                 <p className="whitespace-pre-wrap break-words text-sm leading-7">{note.body}</p>
+-                <time dateTime={note.created_at} className="mt-4 block font-mono text-xs text-emerald-950/45">{new Date(note.created_at).toLocaleString('ja-JP')}</time>
++                <div className="mt-4 flex items-center justify-between gap-4">
++                  <time dateTime={note.created_at} className="block font-mono text-xs text-emerald-950/45">{new Date(note.created_at).toLocaleString('ja-JP')}</time>
++                  <button type="button" onClick={() => void remove(note)} disabled={deletingId !== null}
++                    className="text-xs font-medium text-red-700 underline decoration-red-700/30 underline-offset-4 disabled:cursor-not-allowed disabled:opacity-40">
++                    {deletingId === note.id ? '削除中…' : '削除'}
++                  </button>
++                </div>
+               </li>)}
+             </ol>
+             {notes.length === 100 && <p className="mt-3 text-xs text-emerald-950/55">最新100件を表示しています。</p>}
