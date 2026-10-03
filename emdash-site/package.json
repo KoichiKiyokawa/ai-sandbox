@@ -16,7 +16,7 @@
     "typecheck": "astro check"
   },
   "dependencies": {
-    "@astrojs/node": "^10.0.0",
+    "@astrojs/node": "^11.0.0",
     "@astrojs/react": "^5.0.0",
     "@emdash-cms/plugin-audit-log": "^0.1.0",
     "astro": "^6.1.2",
