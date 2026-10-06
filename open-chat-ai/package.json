@@ -27,7 +27,7 @@
   },
   "devDependencies": {
     "@playwright/mcp": "^0.0.68",
-    "@react-router/dev": "7.12.0",
+    "@react-router/dev": "8.4.0",
     "@tailwindcss/vite": "^4.1.13",
     "@types/node": "^22",
     "@types/react": "^19.2.7",
