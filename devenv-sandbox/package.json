@@ -13,26 +13,26 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "@tailwindcss/vite": "4.2.4",
-    "@tanstack/react-router": "1.168.23",
-    "@tanstack/react-start": "1.167.43",
-    "better-auth": "1.6.9",
-    "drizzle-orm": "0.45.2",
-    "lucide-react": "1.11.0",
+    "@tailwindcss/vite": "4.3.3",
+    "@tanstack/react-router": "1.170.41",
+    "@tanstack/react-start": "1.168.60",
+    "better-auth": "1.7.7",
+    "drizzle-orm": "0.45.3",
+    "lucide-react": "1.51.0",
     "postgres": "3.4.9",
-    "react": "19.2.5",
-    "react-dom": "19.2.5",
-    "tailwindcss": "4.2.4"
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "tailwindcss": "4.3.3"
   },
   "devDependencies": {
-    "@rsbuild/core": "2.0.1",
-    "@types/node": "25.6.0",
-    "@types/react": "19.2.14",
-    "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "6.0.1",
-    "drizzle-kit": "0.31.10",
-    "portless": "0.10.3",
+    "@rsbuild/core": "2.2.11",
+    "@types/node": "25.9.9",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "drizzle-kit": "0.31.11",
+    "portless": "0.15.7",
     "typescript": "6.0.3",
-    "vite": "8.0.10"
+    "vite": "8.3.2"
   }
 }
