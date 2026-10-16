@@ -11,7 +11,7 @@
     "cf:login": "wrangler login"
   },
   "dependencies": {
-    "@react-router/node": "7.12.0",
+    "@react-router/node": "8.4.0",
     "@react-router/serve": "7.12.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
